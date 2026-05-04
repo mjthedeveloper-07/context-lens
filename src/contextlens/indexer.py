@@ -94,6 +94,20 @@ class ContextIndexer:
         
         table.add(payload)
 
+    def add_event(self, app_name: str, summary: str, action_type: str = "view"):
+        """Record a lightweight 'event' in episodic memory."""
+        table = self.db.open_table(self.episodic_table)
+        
+        data = [{
+            "vector": self.embedding_engine.encode(summary),
+            "text": summary,
+            "app_name": app_name,
+            "window_title": summary[:50],
+            "timestamp": datetime.now().isoformat(),
+            "metadata": json.dumps({"action_type": action_type, "is_event": True})
+        }]
+        table.add(data)
+
     def search(self, query: str, limit: int = 5, app_filter: str = None, hours_ago: int = None, search_semantic: bool = False):
         """Search across segmented memory tables."""
         query_vector = self.embedding_engine.encode(query)

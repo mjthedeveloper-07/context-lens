@@ -10,9 +10,52 @@ if platform.system() == "Darwin":
     from AppKit import NSWorkspace
     import Quartz
 
+import httpx
+import base64
+from io import BytesIO
+
+class VisionExtractor:
+    def __init__(self, ollama_url: str = "http://localhost:11434"):
+        self.ollama_url = ollama_url
+        self.model = "moondream" # Default lightweight vision model
+
+    def analyze_screen(self, img: Image.Image) -> str:
+        """Analyze a screen image using a local vision model via Ollama."""
+        try:
+            # Convert PIL image to base64
+            buffered = BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            payload = {
+                "model": self.model,
+                "prompt": "Describe what is happening on this computer screen in one concise sentence.",
+                "stream": False,
+                "images": [img_str]
+            }
+            
+            # Using a sync request for the prototype
+            response = httpx.post(f"{self.ollama_url}/api/generate", json=payload, timeout=30.0)
+            if response.status_code == 200:
+                return response.json().get("response", "").strip()
+        except Exception as e:
+            print(f"Vision Analysis Error: {e}")
+        return ""
+
 class ContextExtractor:
     def __init__(self):
         self.system = platform.system()
+        self.vision = VisionExtractor()
+
+    def get_screenshot(self) -> Optional[Image.Image]:
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+                screenshot = sct.grab(monitor)
+                return Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+        except Exception as e:
+            print(f"Screenshot Error: {e}")
+            return None
 
     def get_active_window_info(self) -> Optional[Dict]:
         if self.system == "Darwin":

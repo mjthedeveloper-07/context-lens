@@ -155,6 +155,20 @@ Simply point the MCP server configuration to the same `uv` command. The **Server
 
 ---
 
+## 🔮 Our Bet on the 2027 Agent Ecosystem
+
+ContextLens is built on three core predictions about where the industry is heading:
+
+1. **Small Language Models (SLMs) at the Edge:** By 2027, organizations will use small, task-specific AI models 3x more than general-purpose LLMs. We optimize for local inference engines like Ollama (MLX/GGUF), WebGPU, and MLX, not just cloud APIs.
+
+2. **Agentic Swarms, Not Siloes:** Future workflows will involve multiple agents (Claude coding, Ollama summarizing, a custom CRUD agent) running simultaneously. ContextLens is designed to become the shared central nervous system for these swarms—a **Model Context Protocol (MCP)** native memory layer.
+
+3. **Push Over Poll:** The MCP ecosystem is standardizing event-driven communication. We are committed to implementing **"Context Subscriptions"** the moment the MCP triggers specification is ratified, turning ContextLens into a reactive, event-driven context bus.
+
+4. **Infinite Context via Dynamic Paging:** Huge context windows (1M+ tokens) still incur quadratic attention costs. We are building toward a **Dynamic Context Paging** system where agents fetch and evict context on-demand from our local memory store, rather than stuffing everything into a prompt.
+
+---
+
 ## 🚀 Roadmap (v2027 Vision)
 
 ContextLens aims to be the **universal memory substrate** for the local agent revolution. These are the high-impact features we need contributors for:

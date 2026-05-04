@@ -37,22 +37,57 @@ class ContextIndexer:
         self.semantic_table = "semantic_knowledge"
         self.episodic_table = "episodic_timeline"
         
+        # Phase 5: Multi-Agent Shared Memory (Annotations)
+        self.annotations_table = "agent_annotations"
+        
         self._init_tables()
 
     def _init_tables(self):
         existing_tables = self.db.table_names()
         
-        for table_name in [self.semantic_table, self.episodic_table]:
+        tables_to_init = [
+            (self.semantic_table, "initialization sequence"),
+            (self.episodic_table, "initialization sequence"),
+            (self.annotations_table, "breadcrumb protocol init")
+        ]
+        
+        for table_name, init_text in tables_to_init:
             if table_name not in existing_tables:
                 data = [{
-                    "vector": self.embedding_engine.encode("initialization sequence"),
-                    "text": "init",
+                    "vector": self.embedding_engine.encode(init_text),
+                    "text": init_text,
                     "app_name": "system",
                     "window_title": "init",
                     "timestamp": datetime.now().isoformat(),
-                    "metadata": "{}"
+                    "metadata": json.dumps({"agent_id": "system"})
                 }]
                 self.db.create_table(table_name, data=data)
+
+    def add_annotation(self, agent_id: str, note: str, semantic_scope: str = "global"):
+        """Phase 5: Leave a semantic breadcrumb for other agents."""
+        table = self.db.open_table(self.annotations_table)
+        
+        data = [{
+            "vector": self.embedding_engine.encode(note),
+            "text": note,
+            "app_name": "agent_swarm",
+            "window_title": f"Scope: {semantic_scope}",
+            "timestamp": datetime.now().isoformat(),
+            "metadata": json.dumps({
+                "agent_id": agent_id,
+                "semantic_scope": semantic_scope,
+                "is_annotation": True
+            })
+        }]
+        table.add(data)
+
+    def search_annotations(self, query: str, limit: int = 5):
+        """Retrieve relevant breadcrumbs left by agents."""
+        query_vector = self.embedding_engine.encode(query)
+        table = self.db.open_table(self.annotations_table)
+        
+        results = table.search(query_vector).limit(limit).to_pandas()
+        return results.to_dict('records')
 
     def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
         """Advanced semantic-aware chunking with sliding window overlap."""

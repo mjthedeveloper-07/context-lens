@@ -66,6 +66,39 @@ def unsubscribe(sub_id: str) -> str:
     return "Subscription not found."
 
 @mcp.tool()
+def leave_annotation(agent_id: str, note: str, semantic_scope: str = "global") -> str:
+    """
+    Leave a semantic 'breadcrumb' for other agents. 
+    This allows a swarm of agents to share context and notes locally.
+    """
+    if not note.strip():
+        return "Error: Note cannot be empty."
+    
+    log_audit("annotation_left", {"agent_id": agent_id, "scope": semantic_scope})
+    indexer.add_annotation(agent_id, note, semantic_scope)
+    return f"Annotation recorded by agent '{agent_id}' in scope '{semantic_scope}'."
+
+@mcp.tool()
+def retrieve_agent_notes(query: str, limit: int = 5) -> str:
+    """
+    Search for breadcrumbs and notes left by other agents in the shared memory.
+    """
+    log_audit("annotation_search", {"query": query})
+    results = indexer.search_annotations(query, limit=limit)
+    if not results:
+        return "No agent notes found for this query."
+    
+    formatted = []
+    for r in results:
+        meta = json.loads(r['metadata'])
+        formatted.append(
+            f"--- Agent: {meta.get('agent_id')} ({r['timestamp']}) ---\n"
+            f"Scope: {meta.get('semantic_scope')}\n"
+            f"Note: {r['text']}\n"
+        )
+    return "\n".join(formatted)
+
+@mcp.tool()
 def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[str] = None, hours_ago: Optional[int] = None) -> str:
     """
     Search through the indexed desktop knowledge.

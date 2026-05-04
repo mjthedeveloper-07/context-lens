@@ -30,27 +30,38 @@ class ContextExtractor:
 
     def extract_text_accessibility(self) -> str:
         if self.system == "Darwin":
-            # Use AppleScript as a high-level bridge to accessibility
-            # This is often more reliable than low-level C-bindings for quick prototyping
+            # Enhanced AppleScript to recurse deeper into the UI tree
             script = '''
             tell application "System Events"
                 set frontApp to name of first application process whose frontmost is true
                 tell process frontApp
-                    set allElements to every UI element
-                    set resultText to ""
-                    repeat with el in allElements
-                        try
-                            set resultText to resultText & (value of el as string) & " "
-                        end try
-                    end repeat
-                    return resultText
+                    try
+                        set allElements to every UI element
+                        set resultText to ""
+                        repeat with el in allElements
+                            try
+                                set resultText to resultText & (value of el as string) & " "
+                                -- Recurse one level deeper for groups/containers
+                                set subElements to every UI element of el
+                                repeat with subEl in subElements
+                                    try
+                                        set resultText to resultText & (value of subEl as string) & " "
+                                    end try
+                                end repeat
+                            end try
+                        end repeat
+                        return resultText
+                    on error
+                        return ""
+                    end try
                 end tell
             end tell
             '''
             try:
-                proc = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+                proc = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=10)
                 return proc.stdout.strip()
-            except Exception:
+            except Exception as e:
+                print(f"Accessibility Error: {e}")
                 return ""
         return ""
 

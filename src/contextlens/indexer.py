@@ -2,6 +2,7 @@ import lancedb
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -18,31 +19,57 @@ class ContextIndexer:
 
     def _init_table(self):
         if self.table_name not in self.db.table_names():
-            # Initial dummy data to define schema
             data = [{
                 "vector": self.model.encode("dummy text"),
                 "text": "dummy text",
                 "app_name": "system",
                 "window_title": "init",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "chunk_id": 0,
+                "metadata": "{}"
             }]
             self.db.create_table(self.table_name, data=data)
+
+    def _chunk_text(self, text: str, chunk_size: int = 500) -> list[str]:
+        """Advanced semantic-aware chunking."""
+        paragraphs = text.split('\n\n')
+        chunks = []
+        current_chunk = ""
+        
+        for para in paragraphs:
+            if len(current_chunk) + len(para) < chunk_size:
+                current_chunk += para + "\n\n"
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = para + "\n\n"
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        return chunks
 
     def add_content(self, text: str, app_name: str, window_title: str):
         if not text.strip():
             return
         
-        embedding = self.model.encode(text)
+        # Implement RAG Refinement: Chunking
+        chunks = self._chunk_text(text)
         table = self.db.open_table(self.table_name)
         
-        data = [{
-            "vector": embedding,
-            "text": text,
-            "app_name": app_name,
-            "window_title": window_title,
-            "timestamp": datetime.now().isoformat()
-        }]
-        table.add(data)
+        payload = []
+        for i, chunk in enumerate(chunks):
+            embedding = self.model.encode(chunk)
+            payload.append({
+                "vector": embedding,
+                "text": chunk,
+                "app_name": app_name,
+                "window_title": window_title,
+                "timestamp": datetime.now().isoformat(),
+                "chunk_id": i,
+                "metadata": json.dumps({"total_chunks": len(chunks)})
+            })
+        
+        table.add(payload)
 
     def search(self, query: str, limit: int = 5, app_filter: str = None):
         query_vector = self.model.encode(query)

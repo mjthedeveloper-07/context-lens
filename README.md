@@ -155,6 +155,34 @@ Simply point the MCP server configuration to the same `uv` command. The **Server
 
 ---
 
+## 🚀 Roadmap (v2027 Vision)
+
+ContextLens aims to be the **universal memory substrate** for the local agent revolution. These are the high-impact features we need contributors for:
+
+### 🌟 Phase 1: Pluggable Embedding Pipeline (BYOM)
+**Goal:** Swap `all-MiniLM-L6-v2` with BGE-M3, Nomic Embed, or OpenAI/Cohere via a simple YAML config.
+**Why:** AI engineers want to benchmark new embedding models against their own data.
+**Status:** 🟡 Seeking Contributors
+
+### 🌟 Phase 2: Agentic "Context Subscriptions" (Webhooks for RAG)
+**Goal:** Agents should not poll. They should subscribe to semantic events (e.g., "notify me when a Slack message mentions `production error`").
+**Spec:** Based on the MCP Triggers and Events charter.
+**Status:** 🔴 Needs MCP Spec Finalization
+
+### 🌟 Phase 3: Native Multimodal OS Streaming
+**Goal:** Provide a continuous, low-latency stream of screen embeddings using local vision models (Moondream 2B, Qwen-VL).
+**Status:** 🔴 Research Phase
+
+### 🌟 Phase 4: Semantic vs. Episodic Memory
+**Goal:** Split the LanceDB tables. Store **Semantic** knowledge (facts, specs) separately from **Episodic** knowledge (timelines of user actions).
+**Status:** 🔴 Planned
+
+### 🌟 Phase 5: Swarm-Ready Memory Sync
+**Goal:** Allow multiple agents (Claude, Ollama, custom scripts) to write "breadcrumbs" and annotations to a shared LanceDB without locking.
+**Status:** 🔴 Planned
+
+---
+
 ## 🛡 Security & Ethics
 *   **Audit Logs**: Every tool call and extraction is logged locally.
 *   **Schema Safety**: Strict Pydantic validation on all agent inputs.

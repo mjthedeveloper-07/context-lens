@@ -1,34 +1,42 @@
+from .embeddings.factory import EmbeddingFactory
 import lancedb
 import pandas as pd
-from sentence_transformers import SentenceTransformer
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 class ContextIndexer:
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str = None, engine_type: str = "local"):
         if db_path is None:
             db_path = str(Path.home() / ".contextlens" / "db")
         
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db = lancedb.connect(db_path)
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.table_name = "window_content"
-        self._init_table()
+        
+        # Phase 1: Pluggable Embedding Pipeline
+        self.embedding_engine = EmbeddingFactory.get_engine(engine_type)
+        
+        # Phase 4: Memory Segmentation
+        self.semantic_table = "semantic_knowledge" # Facts, structured data
+        self.episodic_table = "episodic_timeline"  # Chronological user actions
+        
+        self._init_tables()
 
-    def _init_table(self):
-        if self.table_name not in self.db.table_names():
-            data = [{
-                "vector": self.model.encode("dummy text"),
-                "text": "dummy text",
-                "app_name": "system",
-                "window_title": "init",
-                "timestamp": datetime.now().isoformat(),
-                "chunk_id": 0,
-                "metadata": "{}"
-            }]
-            self.db.create_table(self.table_name, data=data)
+    def _init_tables(self):
+        existing_tables = self.db.table_names()
+        
+        for table_name in [self.semantic_table, self.episodic_table]:
+            if table_name not in existing_tables:
+                data = [{
+                    "vector": self.embedding_engine.encode("initialization sequence"),
+                    "text": "init",
+                    "app_name": "system",
+                    "window_title": "init",
+                    "timestamp": datetime.now().isoformat(),
+                    "metadata": "{}"
+                }]
+                self.db.create_table(table_name, data=data)
 
     def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
         """Advanced semantic-aware chunking with sliding window overlap."""
@@ -37,20 +45,15 @@ class ContextIndexer:
         current_chunk = ""
         
         for para in paragraphs:
-            # If paragraph itself is too large, break it down
             if len(para) > chunk_size:
-                # Add current_chunk first if it exists
                 if current_chunk:
                     chunks.append(current_chunk.strip())
                     current_chunk = ""
-                
-                # Break down large paragraph
                 start = 0
                 while start < len(para):
                     end = start + chunk_size
                     chunk = para[start:end]
                     chunks.append(chunk.strip())
-                    # Move start forward by chunk_size minus overlap
                     start += (chunk_size - overlap)
                 continue
 
@@ -59,7 +62,6 @@ class ContextIndexer:
             else:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
-                    # Start new chunk with the last part of the previous chunk for overlap
                     overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
                     current_chunk = overlap_text + "\n\n" + para + "\n\n"
                 else:
@@ -69,32 +71,34 @@ class ContextIndexer:
             chunks.append(current_chunk.strip())
         return chunks
 
-    def add_content(self, text: str, app_name: str, window_title: str):
+    def add_content(self, text: str, app_name: str, window_title: str, is_semantic: bool = False):
+        """Add content to either Semantic or Episodic memory."""
         if not text.strip():
             return
         
-        # Implement RAG Refinement: Chunking
         chunks = self._chunk_text(text)
-        table = self.db.open_table(self.table_name)
+        table_name = self.semantic_table if is_semantic else self.episodic_table
+        table = self.db.open_table(table_name)
         
         payload = []
         for i, chunk in enumerate(chunks):
-            embedding = self.model.encode(chunk)
+            embedding = self.embedding_engine.encode(chunk)
             payload.append({
                 "vector": embedding,
                 "text": chunk,
                 "app_name": app_name,
                 "window_title": window_title,
                 "timestamp": datetime.now().isoformat(),
-                "chunk_id": i,
-                "metadata": json.dumps({"total_chunks": len(chunks)})
+                "metadata": json.dumps({"chunk_id": i, "total_chunks": len(chunks)})
             })
         
         table.add(payload)
 
-    def search(self, query: str, limit: int = 5, app_filter: str = None, hours_ago: int = None):
-        query_vector = self.model.encode(query)
-        table = self.db.open_table(self.table_name)
+    def search(self, query: str, limit: int = 5, app_filter: str = None, hours_ago: int = None, search_semantic: bool = False):
+        """Search across segmented memory tables."""
+        query_vector = self.embedding_engine.encode(query)
+        table_name = self.semantic_table if search_semantic else self.episodic_table
+        table = self.db.open_table(table_name)
         
         search_query = table.search(query_vector).limit(limit)
         
@@ -103,9 +107,6 @@ class ContextIndexer:
             conditions.append(f"app_name = '{app_filter}'")
         
         if hours_ago:
-            # Simple ISO format comparison
-            # In a real system, we'd use LanceDB's SQL filter on timestamps
-            from datetime import timedelta
             threshold = (datetime.now() - timedelta(hours=hours_ago)).isoformat()
             conditions.append(f"timestamp >= '{threshold}'")
         
@@ -116,8 +117,7 @@ class ContextIndexer:
         return results.to_dict('records')
 
     def get_recent(self, limit: int = 5):
-        """Retrieve the most recent indexed states."""
-        table = self.db.open_table(self.table_name)
-        # Sort by timestamp descending
+        """Retrieve the most recent indexed states from episodic memory."""
+        table = self.db.open_table(self.episodic_table)
         results = table.to_pandas().sort_values(by="timestamp", ascending=False).head(limit)
         return results.to_dict('records')

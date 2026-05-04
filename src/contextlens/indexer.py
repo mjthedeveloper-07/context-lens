@@ -30,19 +30,40 @@ class ContextIndexer:
             }]
             self.db.create_table(self.table_name, data=data)
 
-    def _chunk_text(self, text: str, chunk_size: int = 500) -> list[str]:
-        """Advanced semantic-aware chunking."""
+    def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
+        """Advanced semantic-aware chunking with sliding window overlap."""
         paragraphs = text.split('\n\n')
         chunks = []
         current_chunk = ""
         
         for para in paragraphs:
+            # If paragraph itself is too large, break it down
+            if len(para) > chunk_size:
+                # Add current_chunk first if it exists
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                
+                # Break down large paragraph
+                start = 0
+                while start < len(para):
+                    end = start + chunk_size
+                    chunk = para[start:end]
+                    chunks.append(chunk.strip())
+                    # Move start forward by chunk_size minus overlap
+                    start += (chunk_size - overlap)
+                continue
+
             if len(current_chunk) + len(para) < chunk_size:
                 current_chunk += para + "\n\n"
             else:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
-                current_chunk = para + "\n\n"
+                    # Start new chunk with the last part of the previous chunk for overlap
+                    overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                    current_chunk = overlap_text + "\n\n" + para + "\n\n"
+                else:
+                    current_chunk = para + "\n\n"
         
         if current_chunk:
             chunks.append(current_chunk.strip())

@@ -30,27 +30,33 @@ class ContextExtractor:
 
     def extract_text_accessibility(self) -> str:
         if self.system == "Darwin":
-            # Enhanced AppleScript to recurse deeper into the UI tree
+            # Advanced recursive AppleScript for deep UI tree unwrapping
             script = '''
+            on recurseElements(theElement, depth)
+                if depth > 5 then return "" -- Limit depth for performance
+                set resultText to ""
+                try
+                    set resultText to resultText & (value of theElement as string) & " "
+                end try
+                try
+                    set subElements to UI elements of theElement
+                    repeat with subEl in subElements
+                        set resultText to resultText & my recurseElements(subEl, depth + 1)
+                    end repeat
+                end try
+                return resultText
+            end recurseElements
+
             tell application "System Events"
                 set frontApp to name of first application process whose frontmost is true
                 tell process frontApp
                     try
-                        set allElements to every UI element
-                        set resultText to ""
-                        repeat with el in allElements
-                            try
-                                set resultText to resultText & (value of el as string) & " "
-                                -- Recurse one level deeper for groups/containers
-                                set subElements to every UI element of el
-                                repeat with subEl in subElements
-                                    try
-                                        set resultText to resultText & (value of subEl as string) & " "
-                                    end try
-                                end repeat
-                            end try
+                        set rootElements to UI elements
+                        set totalText to ""
+                        repeat with rootEl in rootElements
+                            set totalText to totalText & my recurseElements(rootEl, 0)
                         end repeat
-                        return resultText
+                        return totalText
                     on error
                         return ""
                     end try
@@ -58,7 +64,7 @@ class ContextExtractor:
             end tell
             '''
             try:
-                proc = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=10)
+                proc = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=15)
                 return proc.stdout.strip()
             except Exception as e:
                 print(f"Accessibility Error: {e}")

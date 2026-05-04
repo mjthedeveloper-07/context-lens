@@ -1,13 +1,30 @@
 import asyncio
 import uuid
 import json
+import os
+import logging
 from fastmcp import FastMCP
 from .indexer import ContextIndexer
 from .extractor import ContextExtractor
 from typing import Optional, Dict
+from pathlib import Path
+from datetime import datetime
 
 # Initialize FastMCP
 mcp = FastMCP("ContextLens")
+
+# Setup Audit Logging
+LOG_DIR = Path.home() / ".contextlens" / "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    filename=LOG_DIR / "audit.log",
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+audit_logger = logging.getLogger("ContextLensAudit")
+
+def log_audit(event_type: str, details: Dict):
+    audit_logger.info(json.dumps({"event": event_type, "details": details}))
 
 # Initialize core components
 indexer = ContextIndexer()
@@ -22,9 +39,13 @@ def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[st
     Search through the indexed desktop knowledge (extracted from app windows).
     Returns the most relevant text snippets found locally.
     """
-    # Security: Strict validation of limit
+    # Security: Strict validation
+    if not query.strip():
+        return "Error: Query cannot be empty."
     if not (1 <= limit <= 50):
         return "Error: Limit must be between 1 and 50."
+    
+    log_audit("search_call", {"query": query, "limit": limit, "app_filter": app_filter})
     
     results = indexer.search(query, limit=limit, app_filter=app_filter)
     if not results:
@@ -44,6 +65,7 @@ def read_active_window() -> str:
     Forces an immediate extraction of the text content currently visible on the screen.
     Useful for getting real-time context from the frontmost application.
     """
+    log_audit("extract_call", {"type": "immediate"})
     data = extractor.extract_comprehensive()
     if not data["text"]:
         return "Could not extract any text from the active window."

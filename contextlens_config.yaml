@@ -1,0 +1,13 @@
+embedding:
+  engine_type: "local"
+  model_name: "all-MiniLM-L6-v2" # Supported: all-MiniLM-L6-v2, BGE-M3, etc.
+
+vision:
+  enabled: true
+  ollama_url: "http://localhost:11434"
+  model_name: "moondream"
+
+indexing:
+  interval_seconds: 30
+  chunk_size: 500
+  overlap: 50

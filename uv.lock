@@ -1124,6 +1124,7 @@ dependencies = [
     { name = "pygetwindow" },
     { name = "pyobjc" },
     { name = "pytesseract" },
+    { name = "pyyaml" },
     { name = "sentence-transformers" },
 ]
 
@@ -1140,6 +1141,7 @@ requires-dist = [
     { name = "pygetwindow", specifier = ">=0.0.9" },
     { name = "pyobjc", specifier = ">=12.1" },
     { name = "pytesseract", specifier = ">=0.3.13" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sentence-transformers", specifier = ">=5.4.1" },
 ]
 

@@ -30,8 +30,40 @@ def log_audit(event_type: str, details: Dict):
 indexer = ContextIndexer()
 extractor = ContextExtractor()
 
-# Global task storage for SEP-1686 (Async Tasks)
+# Global task and subscription storage
 tasks: Dict[str, Dict] = {}
+subscriptions: Dict[str, Dict] = {}
+
+@mcp.tool()
+def subscribe_to_context(pattern: str, app_name: Optional[str] = None) -> str:
+    """
+    Subscribe to semantic triggers (MCP Triggers charter).
+    Notifies the agent when the pattern (keyword/regex) appears on screen.
+    Returns a Subscription ID.
+    """
+    sub_id = str(uuid.uuid4())
+    subscriptions[sub_id] = {
+        "pattern": pattern,
+        "app_name": app_name,
+        "created_at": datetime.now().isoformat(),
+        "active": True,
+        "match_count": 0
+    }
+    log_audit("subscription_created", {"sub_id": sub_id, "pattern": pattern})
+    return f"Subscription active. ID: {sub_id}. You will be notified via context updates when '{pattern}' is detected."
+
+@mcp.tool()
+def list_subscriptions() -> str:
+    """List all active semantic context subscriptions."""
+    return json.dumps(subscriptions, indent=2)
+
+@mcp.tool()
+def unsubscribe(sub_id: str) -> str:
+    """Deactivate a context subscription."""
+    if sub_id in subscriptions:
+        subscriptions[sub_id]["active"] = False
+        return f"Subscription {sub_id} deactivated."
+    return "Subscription not found."
 
 @mcp.tool()
 def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[str] = None, hours_ago: Optional[int] = None) -> str:

@@ -6,20 +6,36 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import yaml
+
 class ContextIndexer:
-    def __init__(self, db_path: str = None, engine_type: str = "local"):
+    def __init__(self, db_path: str = None, config_path: str = "contextlens_config.yaml"):
         if db_path is None:
             db_path = str(Path.home() / ".contextlens" / "db")
         
+        # Load Config
+        try:
+            with open(config_path, 'r') as f:
+                self.config = yaml.safe_load(f)
+        except Exception:
+            self.config = {
+                "embedding": {"engine_type": "local", "model_name": "all-MiniLM-L6-v2"},
+                "indexing": {"chunk_size": 500, "overlap": 50}
+            }
+
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db = lancedb.connect(db_path)
         
-        # Phase 1: Pluggable Embedding Pipeline
-        self.embedding_engine = EmbeddingFactory.get_engine(engine_type)
+        # Phase 1: Pluggable Embedding Pipeline (Config-Driven)
+        emb_cfg = self.config.get("embedding", {})
+        self.embedding_engine = EmbeddingFactory.get_engine(
+            engine_type=emb_cfg.get("engine_type", "local"),
+            model_name=emb_cfg.get("model_name")
+        )
         
         # Phase 4: Memory Segmentation
-        self.semantic_table = "semantic_knowledge" # Facts, structured data
-        self.episodic_table = "episodic_timeline"  # Chronological user actions
+        self.semantic_table = "semantic_knowledge"
+        self.episodic_table = "episodic_timeline"
         
         self._init_tables()
 

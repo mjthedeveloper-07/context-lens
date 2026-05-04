@@ -1,0 +1,23 @@
+[project]
+name = "oss-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=3.2.4",
+    "lancedb>=0.30.2",
+    "mcp>=1.27.0",
+    "mss>=10.2.0",
+    "pandas>=3.0.2",
+    "pillow>=12.2.0",
+    "pyarrow>=24.0.0",
+    "pydantic>=2.13.3",
+    "pygetwindow>=0.0.9",
+    "pyobjc>=12.1",
+    "pytesseract>=0.3.13",
+    "sentence-transformers>=5.4.1",
+]
+
+[project.scripts]
+contextlens = "contextlens.main:main"

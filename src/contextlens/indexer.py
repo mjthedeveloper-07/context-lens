@@ -1,0 +1,56 @@
+import lancedb
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+import os
+from datetime import datetime
+from pathlib import Path
+
+class ContextIndexer:
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = str(Path.home() / ".contextlens" / "db")
+        
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db = lancedb.connect(db_path)
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.table_name = "window_content"
+        self._init_table()
+
+    def _init_table(self):
+        if self.table_name not in self.db.table_names():
+            # Initial dummy data to define schema
+            data = [{
+                "vector": self.model.encode("dummy text"),
+                "text": "dummy text",
+                "app_name": "system",
+                "window_title": "init",
+                "timestamp": datetime.now().isoformat()
+            }]
+            self.db.create_table(self.table_name, data=data)
+
+    def add_content(self, text: str, app_name: str, window_title: str):
+        if not text.strip():
+            return
+        
+        embedding = self.model.encode(text)
+        table = self.db.open_table(self.table_name)
+        
+        data = [{
+            "vector": embedding,
+            "text": text,
+            "app_name": app_name,
+            "window_title": window_title,
+            "timestamp": datetime.now().isoformat()
+        }]
+        table.add(data)
+
+    def search(self, query: str, limit: int = 5, app_filter: str = None):
+        query_vector = self.model.encode(query)
+        table = self.db.open_table(self.table_name)
+        
+        search_query = table.search(query_vector).limit(limit)
+        if app_filter:
+            search_query = search_query.where(f"app_name = '{app_filter}'")
+        
+        results = search_query.to_pandas()
+        return results.to_dict('records')

@@ -43,7 +43,8 @@ class ContextIndexer:
         self._init_tables()
 
     def _init_tables(self):
-        existing_tables = self.db.table_names()
+        response = self.db.list_tables()
+        existing_tables = response if isinstance(response, list) else getattr(response, "tables", [])
         
         tables_to_init = [
             (self.semantic_table, "initialization sequence"),

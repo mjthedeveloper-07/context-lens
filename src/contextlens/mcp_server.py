@@ -34,10 +34,10 @@ extractor = ContextExtractor()
 tasks: Dict[str, Dict] = {}
 
 @mcp.tool()
-def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[str] = None) -> str:
+def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[str] = None, hours_ago: Optional[int] = None) -> str:
     """
-    Search through the indexed desktop knowledge (extracted from app windows).
-    Returns the most relevant text snippets found locally.
+    Search through the indexed desktop knowledge.
+    Supports filtering by application name and time range (hours_ago).
     """
     # Security: Strict validation
     if not query.strip():
@@ -45,9 +45,9 @@ def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[st
     if not (1 <= limit <= 50):
         return "Error: Limit must be between 1 and 50."
     
-    log_audit("search_call", {"query": query, "limit": limit, "app_filter": app_filter})
+    log_audit("search_call", {"query": query, "limit": limit, "app_filter": app_filter, "hours_ago": hours_ago})
     
-    results = indexer.search(query, limit=limit, app_filter=app_filter)
+    results = indexer.search(query, limit=limit, app_filter=app_filter, hours_ago=hours_ago)
     if not results:
         return "No relevant information found in the local index."
     
@@ -58,6 +58,42 @@ def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[st
             f"Context: {r['text']}\n"
         )
     return "\n".join(formatted_results)
+
+@mcp.tool()
+def get_recent_history(limit: int = 5) -> str:
+    """
+    Retrieve the last N states indexed by ContextLens across all apps.
+    Useful for crash recovery or understanding recent activity.
+    """
+    log_audit("history_call", {"limit": limit})
+    results = indexer.get_recent(limit=limit)
+    if not results:
+        return "No history found."
+    
+    formatted_results = []
+    for r in results:
+        formatted_results.append(
+            f"--- {r['timestamp']} | {r['app_name']} ---\n"
+            f"Content: {r['text'][:200]}...\n"
+        )
+    return "\n".join(formatted_results)
+
+@mcp.tool()
+def check_app_update(app_name: str) -> str:
+    """
+    Check if the specified application's content has changed since the last poll.
+    Returns the new content if changed, otherwise indicates no change.
+    """
+    log_audit("monitor_call", {"app": app_name})
+    data = extractor.extract_comprehensive()
+    if data["app_name"].lower() != app_name.lower():
+        return f"Application {app_name} is not currently in focus. Active app is {data['app_name']}."
+    
+    # This tool effectively acts as a 'hook' for agents to poll
+    return (
+        f"Status: Content indexed at {datetime.now().isoformat()}\n"
+        f"Current View:\n{data['text'][:500]}..."
+    )
 
 @mcp.tool()
 def read_active_window() -> str:

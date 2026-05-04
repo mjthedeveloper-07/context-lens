@@ -92,13 +92,32 @@ class ContextIndexer:
         
         table.add(payload)
 
-    def search(self, query: str, limit: int = 5, app_filter: str = None):
+    def search(self, query: str, limit: int = 5, app_filter: str = None, hours_ago: int = None):
         query_vector = self.model.encode(query)
         table = self.db.open_table(self.table_name)
         
         search_query = table.search(query_vector).limit(limit)
+        
+        conditions = []
         if app_filter:
-            search_query = search_query.where(f"app_name = '{app_filter}'")
+            conditions.append(f"app_name = '{app_filter}'")
+        
+        if hours_ago:
+            # Simple ISO format comparison
+            # In a real system, we'd use LanceDB's SQL filter on timestamps
+            from datetime import timedelta
+            threshold = (datetime.now() - timedelta(hours=hours_ago)).isoformat()
+            conditions.append(f"timestamp >= '{threshold}'")
+        
+        if conditions:
+            search_query = search_query.where(" AND ".join(conditions))
         
         results = search_query.to_pandas()
+        return results.to_dict('records')
+
+    def get_recent(self, limit: int = 5):
+        """Retrieve the most recent indexed states."""
+        table = self.db.open_table(self.table_name)
+        # Sort by timestamp descending
+        results = table.to_pandas().sort_values(by="timestamp", ascending=False).head(limit)
         return results.to_dict('records')

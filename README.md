@@ -51,6 +51,32 @@ graph LR
 
 ---
 
+## 🧠 Agentic Use Cases
+
+ContextLens transforms the desktop into an Agent API. Here are concrete prompts and workflows you can execute in Claude Desktop, Cursor, or any MCP client after connecting:
+
+### 1. The "Deep-Search" Summarizer
+**Prompt:** "Search ContextLens for everything about 'Q3 Budget' from the last hour. Summarize it and draft a status email."
+**ContextLens Tool Used:** `search_context_knowledge(query="Q3 Budget", hours_ago=1)`
+**Result:** The agent builds a report from Slack huddles, Excel cell texts, and legacy ERP screens *without any integration keys*.
+
+### 2. The Crash Recovery Agent
+**Prompt:** "What was I doing just before my system froze? Show me the last 5 indexed states from my active apps."
+**ContextLens Tool Used:** `get_recent_history(limit=5)`
+**Result:** Instant retrieval of unsaved work or lost context.
+
+### 3. The Real-Time Transcriber
+**Prompt:** "Monitor my active window every 30 seconds. If you see me editing a Notion page about 'Legal Review', append a timestamped log to a Markdown file."
+**ContextLens Tool Used:** Continuous polling of `read_active_window()` or `check_app_update()`.
+**Result:** A zero-API meeting transcriber or activity logger that works even for desktop-only apps.
+
+### 4. The Onboarding Bot
+**Prompt:** "Every time I open the CRM and you detect an error code via ContextLens, explain that code."
+**ContextLens Tool Used:** `extract_as_markdown()` + agent-side reasoning.
+**Result:** Automated assistance for complex legacy software.
+
+---
+
 ## 🏗️ Architecture Deep Dive
 
 ContextLens is not a simple screen scraper; it is a continuous, local-first semantic indexing pipeline. Here’s exactly what happens under the hood every 30 seconds:

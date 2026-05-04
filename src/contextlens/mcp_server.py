@@ -221,7 +221,7 @@ def get_active_apps_resource() -> str:
     """
     Returns a list of applications that have been indexed recently.
     """
-    table = indexer.db.open_table(indexer.table_name)
+    table = indexer.db.open_table(indexer.episodic_table)
     results = table.to_pandas().drop_duplicates(subset=["app_name"])
     apps = results["app_name"].tolist()
     return f"Recently indexed apps: {', '.join(apps)}"

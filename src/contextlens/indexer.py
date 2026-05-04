@@ -160,13 +160,13 @@ class ContextIndexer:
         }]
         table.add(data)
 
-    def search(self, query: str, limit: int = 5, app_filter: str = None, hours_ago: int = None, search_semantic: bool = False):
-        """Search across segmented memory tables."""
+    def search(self, query: str, limit: int = 5, offset: int = 0, app_filter: str = None, hours_ago: int = None, search_semantic: bool = False):
+        """Search across segmented memory tables with pagination."""
         query_vector = self.embedding_engine.encode(query)
         table_name = self.semantic_table if search_semantic else self.episodic_table
         table = self.db.open_table(table_name)
         
-        search_query = table.search(query_vector).limit(limit)
+        search_query = table.search(query_vector).limit(limit).offset(offset)
         
         conditions = []
         if app_filter:
@@ -182,8 +182,8 @@ class ContextIndexer:
         results = search_query.to_pandas()
         return results.to_dict('records')
 
-    def get_recent(self, limit: int = 5):
-        """Retrieve the most recent indexed states from episodic memory."""
+    def get_recent(self, limit: int = 5, offset: int = 0):
+        """Retrieve the most recent indexed states from episodic memory with pagination."""
         table = self.db.open_table(self.episodic_table)
-        results = table.to_pandas().sort_values(by="timestamp", ascending=False).head(limit)
+        results = table.to_pandas().sort_values(by="timestamp", ascending=False).iloc[offset:offset+limit]
         return results.to_dict('records')

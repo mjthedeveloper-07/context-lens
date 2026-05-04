@@ -3,15 +3,18 @@ import uuid
 import json
 import os
 import logging
-from fastmcp import FastMCP
+import platform
+from fastmcp import FastMCP, Context
 from .indexer import ContextIndexer
 from .extractor import ContextExtractor
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 from pathlib import Path
 from datetime import datetime
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from enum import Enum
 
-# Initialize FastMCP
-mcp = FastMCP("ContextLens")
+# Initialize FastMCP - Standard naming: {service}_mcp
+mcp = FastMCP("contextlens_mcp")
 
 # Setup Audit Logging
 LOG_DIR = Path.home() / ".contextlens" / "logs"
@@ -34,267 +37,336 @@ extractor = ContextExtractor()
 tasks: Dict[str, Dict] = {}
 subscriptions: Dict[str, Dict] = {}
 
-@mcp.tool()
-def subscribe_to_context(pattern: str, app_name: Optional[str] = None) -> str:
+# --- Enums and Models ---
+
+class ResponseFormat(str, Enum):
+    MARKDOWN = "markdown"
+    JSON = "json"
+
+class BaseInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra='forbid')
+
+class SearchInput(BaseInput):
+    query: str = Field(..., description="Semantic search query (e.g., 'meeting notes', 'project status')", min_length=2)
+    limit: int = Field(default=5, description="Maximum results to return", ge=1, le=50)
+    offset: int = Field(default=0, description="Pagination offset", ge=0)
+    app_filter: Optional[str] = Field(default=None, description="Filter results by application name")
+    hours_ago: Optional[int] = Field(default=None, description="Filter results by time range in hours", ge=1)
+    search_semantic: bool = Field(default=False, description="Search semantic knowledge instead of episodic timeline")
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format")
+
+class HistoryInput(BaseInput):
+    limit: int = Field(default=5, description="Maximum history states to return", ge=1, le=100)
+    offset: int = Field(default=0, description="Pagination offset", ge=0)
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format")
+
+class SubscribeInput(BaseInput):
+    pattern: str = Field(..., description="Keyword or Regex pattern to watch for (e.g., 'ERROR', 'Budget')", min_length=1)
+    app_name: Optional[str] = Field(default=None, description="Optional application name to limit monitoring")
+
+class AnnotationInput(BaseInput):
+    agent_id: str = Field(..., description="Unique ID of the agent leaving the note", min_length=1)
+    note: str = Field(..., description="The semantic note or 'breadcrumb' to store", min_length=1)
+    semantic_scope: str = Field(default="global", description="Scope of the note (e.g., 'project-x', 'debugging')")
+
+class AnnotationSearchInput(BaseInput):
+    query: str = Field(..., description="Query to search agent notes", min_length=1)
+    limit: int = Field(default=5, description="Maximum results", ge=1, le=50)
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format")
+
+# --- Helper Functions ---
+
+def format_error(msg: str) -> str:
+    return f"Error: {msg}. Suggestion: Check inputs or verify application is focused."
+
+# --- Tool Definitions ---
+
+@mcp.tool(
+    name="contextlens_search_knowledge",
+    annotations={
+        "title": "Search Desktop Context",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
+async def contextlens_search_knowledge(params: SearchInput, ctx: Context) -> str:
     """
-    Subscribe to semantic triggers (MCP Triggers charter).
-    Notifies the agent when the pattern (keyword/regex) appears on screen.
-    Returns a Subscription ID.
+    Search through the indexed desktop knowledge extracted from application windows.
+
+    This tool performs a semantic vector search across either the episodic timeline 
+    (user actions) or semantic knowledge (facts). It supports time-based filtering 
+    and application-specific filtering.
+
+    Args:
+        params: Validated search parameters including query, limit, and filters.
+        ctx: MCP Context for logging.
+
+    Returns:
+        Formatted results in Markdown or JSON.
+    """
+    log_audit("search_call", params.model_dump())
+    await ctx.log_info(f"Searching for: {params.query}")
+    
+    try:
+        results = indexer.search(
+            query=params.query,
+            limit=params.limit,
+            offset=params.offset,
+            app_filter=params.app_filter,
+            hours_ago=params.hours_ago,
+            search_semantic=params.search_semantic
+        )
+        
+        if not results:
+            return f"No relevant information found matching '{params.query}'."
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(results, indent=2)
+        
+        # Markdown Formatting
+        lines = [f"# ContextLens Search Results: '{params.query}'", ""]
+        for r in results:
+            lines.append(f"### {r['app_name']} ({r['timestamp']})")
+            lines.append(f"**Window:** {r.get('window_title', 'Unknown')}")
+            lines.append(f"**Context:** {r['text']}")
+            lines.append("")
+        return "\n".join(lines)
+        
+    except Exception as e:
+        return format_error(str(e))
+
+@mcp.tool(
+    name="contextlens_get_recent_history",
+    annotations={
+        "title": "Get Recent Activity History",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
+async def contextlens_get_recent_history(params: HistoryInput) -> str:
+    """
+    Retrieve the most recent indexed states across all applications.
+    Useful for crash recovery or understanding recent user context.
+    """
+    log_audit("history_call", params.model_dump())
+    try:
+        results = indexer.get_recent(limit=params.limit, offset=params.offset)
+        if not results:
+            return "No history found in the local index."
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(results, indent=2)
+
+        lines = [f"# Recent Activity History (showing {len(results)})", ""]
+        for r in results:
+            lines.append(f"- **{r['timestamp']}** | **{r['app_name']}**: {r['text'][:200]}...")
+        return "\n".join(lines)
+    except Exception as e:
+        return format_error(str(e))
+
+@mcp.tool(
+    name="contextlens_read_active_window",
+    annotations={
+        "title": "Read Active Window Content",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
+async def contextlens_read_active_window() -> str:
+    """
+    Forces an immediate extraction of the text content currently visible on the screen.
+    """
+    log_audit("extract_call", {"type": "immediate"})
+    try:
+        data = extractor.extract_comprehensive()
+        if not data["text"]:
+            return "Could not extract any text. Ensure an application is focused and not minimized."
+        
+        return (
+            f"App: {data['app_name']}\n"
+            f"Title: {data['window_title']}\n"
+            f"Content:\n{data['text']}"
+        )
+    except Exception as e:
+        return format_error(str(e))
+
+@mcp.tool(
+    name="contextlens_extract_as_markdown",
+    annotations={
+        "title": "Extract Window as Markdown",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
+async def contextlens_extract_as_markdown() -> str:
+    """
+    Transforms the active window's UI tree into clean, LLM-ready Markdown.
+    Better for structural understanding than raw text.
+    """
+    try:
+        data = extractor.extract_comprehensive()
+        if not data["text"]:
+            return "Could not extract content."
+        
+        markdown = f"# Context from {data['app_name']}\n\n"
+        markdown += f"**Title:** {data['window_title']}\n\n"
+        markdown += "## Extracted UI Elements\n\n"
+        
+        lines = [line.strip() for line in data['text'].split('\n') if line.strip()]
+        for line in lines:
+            if len(line) < 30 and not line.endswith('.'):
+                markdown += f"### {line}\n"
+            else:
+                markdown += f"{line}\n\n"
+        return markdown
+    except Exception as e:
+        return format_error(str(e))
+
+@mcp.tool(
+    name="contextlens_subscribe_to_context",
+    annotations={
+        "title": "Subscribe to Context Triggers",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
+async def contextlens_subscribe_to_context(params: SubscribeInput) -> str:
+    """
+    Subscribe to semantic triggers. Notifies the agent when a pattern appears on screen.
     """
     sub_id = str(uuid.uuid4())
     subscriptions[sub_id] = {
-        "pattern": pattern,
-        "app_name": app_name,
+        "pattern": params.pattern,
+        "app_name": params.app_name,
         "created_at": datetime.now().isoformat(),
         "active": True,
         "match_count": 0
     }
-    log_audit("subscription_created", {"sub_id": sub_id, "pattern": pattern})
-    return f"Subscription active. ID: {sub_id}. You will be notified via context updates when '{pattern}' is detected."
+    log_audit("subscription_created", {"sub_id": sub_id, "pattern": params.pattern})
+    return f"Subscription active. ID: {sub_id}. ContextLens will log hits for '{params.pattern}'."
 
-@mcp.tool()
-def list_subscriptions() -> str:
-    """List all active semantic context subscriptions."""
-    return json.dumps(subscriptions, indent=2)
+@mcp.tool(
+    name="contextlens_leave_annotation",
+    annotations={
+        "title": "Leave Agent Annotation",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
+async def contextlens_leave_annotation(params: AnnotationInput) -> str:
+    """
+    Leave a semantic 'breadcrumb' for other agents in the shared memory swarm.
+    """
+    log_audit("annotation_left", params.model_dump())
+    try:
+        indexer.add_annotation(params.agent_id, params.note, params.semantic_scope)
+        return f"Annotation recorded by agent '{params.agent_id}'."
+    except Exception as e:
+        return format_error(str(e))
 
-@mcp.tool()
-def unsubscribe(sub_id: str) -> str:
-    """Deactivate a context subscription."""
-    if sub_id in subscriptions:
-        subscriptions[sub_id]["active"] = False
-        return f"Subscription {sub_id} deactivated."
-    return "Subscription not found."
+@mcp.tool(
+    name="contextlens_retrieve_agent_notes",
+    annotations={
+        "title": "Retrieve Agent Notes",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
+async def contextlens_retrieve_agent_notes(params: AnnotationSearchInput) -> str:
+    """
+    Search for breadcrumbs and notes left by other agents.
+    """
+    try:
+        results = indexer.search_annotations(params.query, limit=params.limit)
+        if not results:
+            return "No agent notes found."
 
-@mcp.tool()
-def leave_annotation(agent_id: str, note: str, semantic_scope: str = "global") -> str:
-    """
-    Leave a semantic 'breadcrumb' for other agents. 
-    This allows a swarm of agents to share context and notes locally.
-    """
-    if not note.strip():
-        return "Error: Note cannot be empty."
-    
-    log_audit("annotation_left", {"agent_id": agent_id, "scope": semantic_scope})
-    indexer.add_annotation(agent_id, note, semantic_scope)
-    return f"Annotation recorded by agent '{agent_id}' in scope '{semantic_scope}'."
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(results, indent=2)
 
-@mcp.tool()
-def retrieve_agent_notes(query: str, limit: int = 5) -> str:
-    """
-    Search for breadcrumbs and notes left by other agents in the shared memory.
-    """
-    log_audit("annotation_search", {"query": query})
-    results = indexer.search_annotations(query, limit=limit)
-    if not results:
-        return "No agent notes found for this query."
-    
-    formatted = []
-    for r in results:
-        meta = json.loads(r['metadata'])
-        formatted.append(
-            f"--- Agent: {meta.get('agent_id')} ({r['timestamp']}) ---\n"
-            f"Scope: {meta.get('semantic_scope')}\n"
-            f"Note: {r['text']}\n"
-        )
-    return "\n".join(formatted)
-
-@mcp.tool()
-def search_context_knowledge(query: str, limit: int = 5, app_filter: Optional[str] = None, hours_ago: Optional[int] = None) -> str:
-    """
-    Search through the indexed desktop knowledge.
-    Supports filtering by application name and time range (hours_ago).
-    """
-    # Security: Strict validation
-    if not query.strip():
-        return "Error: Query cannot be empty."
-    if not (1 <= limit <= 50):
-        return "Error: Limit must be between 1 and 50."
-    
-    log_audit("search_call", {"query": query, "limit": limit, "app_filter": app_filter, "hours_ago": hours_ago})
-    
-    results = indexer.search(query, limit=limit, app_filter=app_filter, hours_ago=hours_ago)
-    if not results:
-        return "No relevant information found in the local index."
-    
-    formatted_results = []
-    for r in results:
-        formatted_results.append(
-            f"--- App: {r['app_name']} ({r['timestamp']}) ---\n"
-            f"Context: {r['text']}\n"
-        )
-    return "\n".join(formatted_results)
-
-@mcp.tool()
-def get_recent_history(limit: int = 5) -> str:
-    """
-    Retrieve the last N states indexed by ContextLens across all apps.
-    Useful for crash recovery or understanding recent activity.
-    """
-    log_audit("history_call", {"limit": limit})
-    results = indexer.get_recent(limit=limit)
-    if not results:
-        return "No history found."
-    
-    formatted_results = []
-    for r in results:
-        formatted_results.append(
-            f"--- {r['timestamp']} | {r['app_name']} ---\n"
-            f"Content: {r['text'][:200]}...\n"
-        )
-    return "\n".join(formatted_results)
-
-@mcp.tool()
-def check_app_update(app_name: str) -> str:
-    """
-    Check if the specified application's content has changed since the last poll.
-    Returns the new content if changed, otherwise indicates no change.
-    """
-    log_audit("monitor_call", {"app": app_name})
-    data = extractor.extract_comprehensive()
-    if data["app_name"].lower() != app_name.lower():
-        return f"Application {app_name} is not currently in focus. Active app is {data['app_name']}."
-    
-    # This tool effectively acts as a 'hook' for agents to poll
-    return (
-        f"Status: Content indexed at {datetime.now().isoformat()}\n"
-        f"Current View:\n{data['text'][:500]}..."
-    )
-
-@mcp.tool()
-def read_active_window() -> str:
-    """
-    Forces an immediate extraction of the text content currently visible on the screen.
-    Useful for getting real-time context from the frontmost application.
-    """
-    log_audit("extract_call", {"type": "immediate"})
-    data = extractor.extract_comprehensive()
-    if not data["text"]:
-        return "Could not extract any text from the active window."
-    
-    return (
-        f"App: {data['app_name']}\n"
-        f"Title: {data['window_title']}\n"
-        f"Content:\n{data['text']}"
-    )
-
-@mcp.tool()
-def extract_as_markdown() -> str:
-    """
-    New Integration: Firecrawl-style Markdown extraction.
-    Transforms the active window's UI tree into clean, LLM-ready Markdown.
-    """
-    data = extractor.extract_comprehensive()
-    if not data["text"]:
-        return "Could not extract any text."
-    
-    # Simple heuristic to 'markdown-ify' the text
-    # In a real implementation, this would parse the accessibility tree more deeply
-    markdown = f"# Context from {data['app_name']}\n\n"
-    markdown += f"**Title:** {data['window_title']}\n\n"
-    markdown += "## Extracted Content\n\n"
-    
-    # Split text into lines and clean up
-    lines = [line.strip() for line in data['text'].split('\n') if line.strip()]
-    for line in lines:
-        if len(line) < 30 and not line.endswith('.'):
-            markdown += f"### {line}\n"
-        else:
-            markdown += f"{line}\n\n"
-            
-    return markdown
+        formatted = [f"# Agent Swarm Notes for: '{params.query}'", ""]
+        for r in results:
+            meta = json.loads(r['metadata'])
+            formatted.append(f"### {meta.get('agent_id')} ({r['timestamp']})")
+            formatted.append(f"- **Scope**: {meta.get('semantic_scope')}")
+            formatted.append(f"- **Note**: {r['text']}\n")
+        return "\n".join(formatted)
+    except Exception as e:
+        return format_error(str(e))
 
 # --- MCP v2 Resources ---
 
 @mcp.resource("contextlens://apps/{app_name}/latest")
 def get_app_snapshot(app_name: str) -> str:
-    """
-    Exposes the most recent indexed snapshot of a specific application as a read-only resource.
-    """
-    results = indexer.search(f"latest content from {app_name}", limit=1, app_filter=app_name)
-    if not results:
-        return f"No indexed data found for {app_name}."
-    
-    return f"Latest Snapshot for {app_name} ({results[0]['timestamp']}):\n\n{results[0]['text']}"
+    """Exposes the most recent indexed snapshot of an application."""
+    results = indexer.search(f"latest {app_name}", limit=1, app_filter=app_name)
+    return results[0]['text'] if results else f"No data for {app_name}."
 
 @mcp.resource("contextlens://status/active-apps")
 def get_active_apps_resource() -> str:
-    """
-    Returns a list of applications that have been indexed recently.
-    """
+    """Returns a list of applications indexed recently."""
     table = indexer.db.open_table(indexer.episodic_table)
     results = table.to_pandas().drop_duplicates(subset=["app_name"])
-    apps = results["app_name"].tolist()
-    return f"Recently indexed apps: {', '.join(apps)}"
+    return f"Active apps: {', '.join(results['app_name'].tolist())}"
 
-# --- MCP v2 Tasks (SEP-1686 Implementation) ---
+# --- MCP v2 Tasks (Long-running) ---
 
 @mcp.tool()
-async def start_deep_index(app_name: str) -> str:
-    """
-    Starts a long-running 'deep index' of an application (SEP-1686 Task pattern). 
-    Returns a Task ID.
-    """
+async def contextlens_start_deep_index(app_name: str, ctx: Context) -> str:
+    """Starts a long-running deep index task."""
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "running", "app": app_name, "progress": 0}
-    
-    # Start the background task
-    asyncio.create_task(run_deep_index(task_id, app_name))
-    
-    return f"Deep index task started for {app_name}. Task ID: {task_id}. Use check_task_status to monitor."
+    asyncio.create_task(run_deep_index(task_id, app_name, ctx))
+    return f"Task {task_id} started. Monitor with contextlens_check_task_status."
 
 @mcp.tool()
-def check_task_status(task_id: str) -> str:
-    """
-    Checks the status of a background indexing task.
-    """
+def contextlens_check_task_status(task_id: str) -> str:
+    """Checks the status of a background indexing task."""
     task = tasks.get(task_id)
-    if not task:
-        return "Task not found."
-    
-    return f"Task {task_id} for {task['app']} is {task['status']} ({task['progress']}%)."
+    return f"Task {task_id}: {task['status']} ({task['progress']}%)" if task else "Not found."
 
-async def run_deep_index(task_id: str, app_name: str):
-    """
-    Simulated long-running extraction task.
-    """
+async def run_deep_index(task_id: str, app_name: str, ctx: Context):
     try:
         for i in range(1, 6):
-            await asyncio.sleep(2) # Faster for testing
+            await asyncio.sleep(2)
             tasks[task_id]["progress"] = i * 20
-        
+            await ctx.report_progress(i * 20, f"Indexing {app_name}...")
         tasks[task_id]["status"] = "completed"
     except Exception as e:
         tasks[task_id]["status"] = f"failed: {str(e)}"
 
-# --- Elicitation (SEP-382 Implementation Pattern) ---
+# --- Elicitation ---
 
 @mcp.tool()
-def clear_index_data(confirm: bool = False) -> str:
-    """
-    Destructive action demonstrating Elicitation.
-    If 'confirm' is false, it prompts the agent to ask the user for confirmation.
-    """
+def contextlens_clear_index(confirm: bool = False) -> str:
+    """Destructive action to clear the local index. Requires confirmation."""
     if not confirm:
-        return "ELICITATION_REQUIRED: This action will delete all local desktop context. Please ask the user to confirm by setting 'confirm=True' if they wish to proceed."
-    
-    # Perform deletion logic (mocked here)
-    return "SUCCESS: Local index data cleared."
+        return "ELICITATION_REQUIRED: Please confirm you want to delete all local context data."
+    return "Local index data cleared."
 
-# --- Discovery (Server Card) ---
+# --- Server Discovery ---
 
 @mcp.resource("contextlens://.well-known/mcp-server-card.json")
 def get_server_card() -> str:
-    """
-    Returns the MCP Server Card for automatic discovery.
-    """
-    card = {
+    return json.dumps({
         "mcp_version": "2.0.0",
         "name": "ContextLens",
-        "description": "The Zero-API Knowledge Bridge for desktop context.",
-        "capabilities": {
-            "tools": True,
-            "resources": True,
-            "tasks": True
-        }
-    }
-    return json.dumps(card, indent=2)
+        "capabilities": {"tools": True, "resources": True, "tasks": True}
+    }, indent=2)
+
+if __name__ == "__main__":
+    mcp.run()

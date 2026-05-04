@@ -51,6 +51,27 @@ graph LR
 
 ---
 
+## 🏗️ Architecture Deep Dive
+
+ContextLens is not a simple screen scraper; it is a continuous, local-first semantic indexing pipeline. Here’s exactly what happens under the hood every 30 seconds:
+
+### 1. Extraction Layer (`extractor.py`)
+- **macOS Deep Trees:** We bypass simple OCR by default. Our AppleScript engine recursively unwraps the entire `NSAccessibility` tree, converting nested UI elements (Groups, Tables, SplitViews) into flat, ordered text. This preserves the spatial relationship of UI elements.
+- **Firecrawl-Style Markdown:** The raw UI text is transformed into clean, LLM-optimized Markdown via heuristics that detect headers vs. content based on line length.
+- **Fallback Cascade:** If the Accessibility tree is empty (e.g., canvas apps, Citrix), we automatically fall back to local Tesseract OCR.
+
+### 2. Chunking & Embedding Strategy (`indexer.py`)
+We prioritize **contextual contiguity** over naive recursive splitting:
+- **Semantic-Aware Chunking:** We don't split on arbitrary character counts. The engine first splits on `\n\n` (paragraph boundaries) and only breaks when a chunk exceeds **500 characters**. This keeps reasoning steps intact.
+- **Overlap Strategy:** Currently, we use discrete chunks. *(Planned: Adding a 50-character sliding window overlap between chunks to prevent retrieval fragmentation).*
+- **Embedding Model:** We default to `all-MiniLM-L6-v2` (384 dimensions) via `sentence-transformers`. It runs **entirely on CPU**, generating vectors in sub-10ms.
+- **Storage:** Vectors are stored in **LanceDB** (v0.30+), a columnar vector database built on Apache Arrow. This gives our index zero-copy interoperability with the PyData ecosystem (Pandas, Polars, PyArrow).
+
+### 3. Deduplication Logic (`watcher.py`)
+We maintain an **MD5 hash map** of the last indexed screen state. If a window hasn't changed, we skip embedding entirely, saving precious context window bandwidth.
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
